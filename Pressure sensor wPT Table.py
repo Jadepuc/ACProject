@@ -31,31 +31,46 @@ def get_float(prompt):
 PT_TABLES = {
     "R410A": {
         "single": [
-            (-40, 10.7), (-30, 17.7), (-20, 26.2), (-10, 36.3), (0, 48.2),
-            (10, 62.2), (20, 78.4), (30, 97.0), (40, 118.4), (50, 142.6),
-            (60, 170.1), (70, 201.1), (80, 235.7), (90, 274.5), (100, 317.6),
-            (110, 365.4), (120, 418.3), (130, 476.8), (140, 541.5), (150, 613.0),
-        ]
+            (-40.0, 0.74), (-34.4, 1.22), (-28.9, 1.81), (-23.3, 2.5), (-17.8, 3.32),
+            (-12.2, 4.29), (-6.7, 5.41), (-1.1, 6.69), (4.4, 8.16), (10.0, 9.83),
+            (15.6, 11.73), (21.1, 13.87), (26.7, 16.25), (32.2, 18.93), (37.8, 21.9),
+            (43.3, 25.19), (48.9, 28.84), (54.4, 32.87), (60.0, 37.34), (65.6, 42.26),
+        ],
     },
     "R22": {
         "single": [
-            (-40, 0.6), (-30, 4.9), (-20, 10.2), (-10, 16.5), (0, 24.0),
-            (10, 32.8), (20, 43.1), (30, 55.0), (40, 68.6), (50, 84.1),
-            (60, 101.6), (70, 121.4), (80, 143.6), (90, 168.4), (100, 195.9),
-            (110, 226.4), (120, 260.0), (130, 296.9), (140, 337.4), (150, 381.7),
-        ]
+            (-40.0, 0.04), (-34.4, 0.34), (-28.9, 0.7), (-23.3, 1.14), (-17.8, 1.65),
+            (-12.2, 2.26), (-6.7, 2.97), (-1.1, 3.79), (4.4, 4.73), (10.0, 5.8),
+            (15.6, 7.01), (21.1, 8.37), (26.7, 9.9), (32.2, 11.61), (37.8, 13.51),
+            (43.3, 15.61), (48.9, 17.93), (54.4, 20.47), (60.0, 23.26), (65.6, 26.32),
+        ],
     },
     "R134A": {
         "single": [
-            (-40, -7.3), (-30, -4.8), (-20, -1.8), (-10, 1.9), (0, 6.5),
-            (10, 11.9), (20, 18.4), (30, 26.1), (40, 35.0), (50, 45.4),
-            (60, 57.4), (70, 71.1), (80, 86.7), (90, 104.3), (100, 124.2),
-            (110, 146.4), (120, 171.2), (130, 198.7), (140, 229.2), (150, 262.9),
-        ]
-    }
+            (-40.0, -0.5), (-34.4, -0.33), (-28.9, -0.12), (-23.3, 0.13), (-17.8, 0.45),
+            (-12.2, 0.82), (-6.7, 1.27), (-1.1, 1.8), (4.4, 2.41), (10.0, 3.13),
+            (15.6, 3.96), (21.1, 4.9), (26.7, 5.98), (32.2, 7.19), (37.8, 8.56),
+            (43.3, 10.09), (48.9, 11.8), (54.4, 13.7), (60.0, 15.8), (65.6, 18.13),
+        ],
+    },
+    "R404A": {
+        "bubble": [  # liquid point -- use for subcooling
+            (-40.0, 0.34), (-34.4, 0.71), (-28.9, 1.16), (-23.3, 1.7), (-17.8, 2.32),
+            (-12.2, 3.05), (-6.7, 3.9), (-1.1, 4.87), (4.4, 5.99), (10.0, 7.26),
+            (15.6, 8.69), (21.1, 10.29), (26.7, 12.09), (32.2, 14.1), (37.8, 16.33),
+            (43.3, 18.8), (48.9, 21.52), (54.4, 24.52), (60.0, 27.83), (65.6, 31.5),
+        ],
+        "dew": [  # vapor point -- use for superheat
+            (-40.0, 0.3), (-34.4, 0.66), (-28.9, 1.1), (-23.3, 1.63), (-17.8, 2.25),
+            (-12.2, 2.97), (-6.7, 3.81), (-1.1, 4.78), (4.4, 5.89), (10.0, 7.14),
+            (15.6, 8.56), (21.1, 10.16), (26.7, 11.96), (32.2, 13.95), (37.8, 16.18),
+            (43.3, 18.64), (48.9, 21.37), (54.4, 24.38), (60.0, 27.7), (65.6, 31.37),
+        ],
+    },
 }
 
 
+##creates list of refrigerants to be used
 def get_refrigerant():
     #creates list of refrigerants to search through
     valid = ", ".join(PT_TABLES.keys())
@@ -94,18 +109,15 @@ def take_setpoints():
     return high_pres, low_pres
 
 
-def take_analogue_input():
-    # Take analaogue input from user
-    analogue_high = float(input("Enter the Analogue High Input value: "))
-    analogue_low = float(input("Enter the Analogue Low value: "))
-    return analogue_high, analogue_low
-
-
-def take_temperature_readings():
-    # Get the suction line and liquid line temperatures for SH/SC calcs
-    suction_temp = get_float("Enter the Suction Line Temperature (F): ")
-    liquid_temp = get_float("Enter the Liquid Line Temperature (F): ")
-    return suction_temp, liquid_temp
+def take_readings():
+    """Get analogue pressures and line temperatures together, in one round,
+    since the temperatures are needed to compute superheat/subcooling
+    for the same instant as the pressure reading."""
+    analogue_high = get_float("Enter the Analogue High Input value (bar): ")
+    analogue_low = get_float("Enter the Analogue Low value (bar): ")
+    suction_temp = get_float("Enter the Suction Line Temperature (C): ")
+    liquid_temp = get_float("Enter the Liquid Line Temperature (C): ")
+    return analogue_high, analogue_low, suction_temp, liquid_temp
 
 
 def classify(value, setpoint):
@@ -139,12 +151,33 @@ def fault_alarm(analogue_high, analogue_low, high_pres, low_pres):
     return message
 
 
-## change for target subcoolig and superheat
-TYPICAL_SH_SC_RANGE = (8, 12)
+# ---------------------------------------------------------------
+# How far a reading is allowed to drift from the user's target
+# superheat/subcooling before it's classified as "low" or "high".
+# This is a placeholder -- 2 degC is a reasonable starting point,
+# but tighten or loosen it to match how precisely your sensors and
+# service practice can realistically hold a reading.
+# ---------------------------------------------------------------
+SH_SC_TOLERANCE = 2.0  # degC
+
+
+def take_target_sh_sc():
+    """Get the target superheat and subcooling for this specific system.
+    These come from the manufacturer's charging chart/nameplate data (for
+    TXV systems) or a target-superheat chart (for fixed-orifice systems) --
+    not a universal constant, since the correct target varies by system."""
+    target_superheat = get_float("Enter the target Superheat value for this system (C): ")
+    target_subcooling = get_float("Enter the target Subcooling value for this system (C): ")
+    return target_superheat, target_subcooling
+
+
+def build_range(target, tolerance=SH_SC_TOLERANCE):
+    """Turn a single target value into a (low, high) acceptable band."""
+    return (target - tolerance, target + tolerance)
 
 
 def calc_superheat(suction_temp, low_pressure, refrigerant):
-    """Superheat = actual suction line temp - saturated evaporating temp."""
+    """Superheat (degC) = actual suction line temp - saturated evaporating temp."""
     pt_table = get_pt_table(refrigerant, "superheat")
     sat_temp = saturation_temp(low_pressure, pt_table)
     if sat_temp is None:
@@ -153,7 +186,7 @@ def calc_superheat(suction_temp, low_pressure, refrigerant):
 
 
 def calc_subcooling(liquid_temp, high_pressure, refrigerant):
-    """Subcooling = saturated condensing temp - actual liquid line temp."""
+    """Subcooling (degC) = saturated condensing temp - actual liquid line temp."""
     pt_table = get_pt_table(refrigerant, "subcooling")
     sat_temp = saturation_temp(high_pressure, pt_table)
     if sat_temp is None:
@@ -161,8 +194,56 @@ def calc_subcooling(liquid_temp, high_pressure, refrigerant):
     return sat_temp - liquid_temp
 
 
-def report_superheat_subcooling(suction_temp, liquid_temp, low_pressure, high_pressure, refrigerant):
-    """Calculate, print, log, and sanity-check superheat and subcooling."""
+def classify_sh_sc(value, normal_range):
+    """Classify a superheat/subcooling reading as low, normal, or high
+    relative to the target range."""
+    low, high = normal_range
+    if value < low:
+        return "low"
+    elif value > high:
+        return "high"
+    else:
+        return "normal"
+
+
+# ---------------------------------------------------------------
+# Standard superheat/subcooling charge-diagnosis matrix.
+# This is the same underlying logic taught across HVACR service
+# training: pressure alone can be misleading, but superheat and
+# subcooling together reveal whether the evaporator/condenser are
+# actually starved or flooded with refrigerant. Combinations not
+# listed here don't match a single well-known pattern, so they
+# fall back to a generic "inconclusive" message rather than a
+# guessed diagnosis.
+# ---------------------------------------------------------------
+SH_SC_DIAGNOSIS = {
+    ("high",
+     "low"): "Likely Undercharge or Refrigerant Leak - evaporator starved, condenser under-filled. Find the leak before adding refrigerant.",
+    ("low", "high"): "Likely Overcharge or TEV Stuck Open - evaporator flooding, condenser backed up with liquid.",
+    ("high",
+     "normal"): "Possible Restriction (metering device/filter-drier) or Low Evaporator Airflow - charge appears adequate.",
+    ("high", "high"): "Possible Liquid-Line Restriction - refrigerant is backing up before the metering device.",
+    ("low", "normal"): "Floodback Risk - evaporator may be overfed; check TEV and sensing bulb.",
+    ("normal", "low"): "Borderline Undercharge - TXV masking a low subcooling reading by throttling closed.",
+    ("normal", "high"): "Possible Overcharge or Condenser Issue - check for a dirty coil or non-condensables.",
+    ("normal", "normal"): "Superheat and subcooling both within normal range - no charge-related fault indicated.",
+}
+
+
+def diagnose_charge(superheat, subcooling, sh_range, sc_range):
+    """Look up the standard charge-diagnosis message for this SH/SC pair,
+    classified against this system's own target ranges."""
+    sh_state = classify_sh_sc(superheat, sh_range)
+    sc_state = classify_sh_sc(subcooling, sc_range)
+    return SH_SC_DIAGNOSIS.get(
+        (sh_state, sc_state),
+        f"Inconclusive combination (superheat {sh_state}, subcooling {sc_state}) - recommend manual inspection.",
+    )
+
+
+def report_superheat_subcooling(suction_temp, liquid_temp, low_pressure, high_pressure, refrigerant, sh_range,
+                                sc_range):
+    """Calculate, print, log, and diagnose superheat and subcooling."""
     superheat = calc_superheat(suction_temp, low_pressure, refrigerant)
     subcooling = calc_subcooling(liquid_temp, high_pressure, refrigerant)
 
@@ -170,14 +251,12 @@ def report_superheat_subcooling(suction_temp, liquid_temp, low_pressure, high_pr
         print("Superheat/Subcooling: pressure reading is outside the PT table range, cannot calculate.")
         return superheat, subcooling
 
-    print(f"Superheat: {superheat:.1f} F | Subcooling: {subcooling:.1f} F")
-    logging.info(f"Superheat: {superheat:.1f} F, Subcooling: {subcooling:.1f} F")
+    print(f"Superheat: {superheat:.1f} C | Subcooling: {subcooling:.1f} C")
+    logging.info(f"Superheat: {superheat:.1f} C, Subcooling: {subcooling:.1f} C")
 
-    low, high = TYPICAL_SH_SC_RANGE
-    if not (low <= superheat <= high):
-        print(f"  Note: Superheat is outside the common {low}-{high} F teaching range - check manufacturer spec.")
-    if not (low <= subcooling <= high):
-        print(f"  Note: Subcooling is outside the common {low}-{high} F teaching range - check manufacturer spec.")
+    diagnosis = diagnose_charge(superheat, subcooling, sh_range, sc_range)
+    print(f"  Charge Diagnosis: {diagnosis}")
+    logging.info(f"Charge Diagnosis: {diagnosis}")
 
     return superheat, subcooling
 
@@ -192,11 +271,13 @@ def set_interval():
 CONSECUTIVE_READINGS_REQUIRED = 3
 
 
-def monitor(high_pres, low_pres, interval_seconds, refrigerant):
+def monitor(high_pres, low_pres, interval_seconds, refrigerant, sh_range, sc_range):
     last_message = None
     consecutive_count = 0
     while True:
-        analogue_high, analogue_low = take_analogue_input()
+        analogue_high, analogue_low, suction_temp, liquid_temp = take_readings()
+
+        # Layer 1: hard-limit pressure check against the setpoints
         message = fault_alarm(analogue_high, analogue_low, high_pres, low_pres)
         if message == last_message and message != "No fault detected":
             consecutive_count += 1
@@ -207,8 +288,12 @@ def monitor(high_pres, low_pres, interval_seconds, refrigerant):
             print(f"*** CONFIRMED ALARM: {message} ***")
             logging.warning(f"CONFIRMED ALARM: {message}")
 
-        suction_temp, liquid_temp = take_temperature_readings()
-        report_superheat_subcooling(suction_temp, liquid_temp, analogue_low, analogue_high, refrigerant)
+        # Layer 2: superheat/subcooling charge diagnosis (more accurate,
+        # since it reflects what's actually happening inside the
+        # evaporator/condenser rather than just comparing raw pressure
+        # to a fixed setpoint), judged against THIS system's own targets
+        report_superheat_subcooling(suction_temp, liquid_temp, analogue_low, analogue_high, refrigerant, sh_range,
+                                    sc_range)
 
         stop = input("Press Enter to continue, or type 'q' to quit: ")
         if stop.strip().lower() == "q":
@@ -219,10 +304,16 @@ def monitor(high_pres, low_pres, interval_seconds, refrigerant):
 def main():
     refrigerant = get_refrigerant()
     high_pres, low_pres = take_setpoints()
+    target_superheat, target_subcooling = take_target_sh_sc()
+    sh_range = build_range(target_superheat)
+    sc_range = build_range(target_subcooling)
+    print(f"Target Superheat: {target_superheat} C (accepting {sh_range[0]:.1f}-{sh_range[1]:.1f} C)")
+    print(f"Target Subcooling: {target_subcooling} C (accepting {sc_range[0]:.1f}-{sc_range[1]:.1f} C)")
     interval_seconds = set_interval()
-    monitor(high_pres, low_pres, interval_seconds, refrigerant)
+    monitor(high_pres, low_pres, interval_seconds, refrigerant, sh_range, sc_range)
 
 
 if __name__ == "__main__":
     main()
+
 
