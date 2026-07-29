@@ -28,3 +28,7 @@
 2026-07-28 15:06:26,830 - Condenser Airflow Restricted
 2026-07-28 15:06:28,512 - Condenser Airflow Restricted
 2026-07-28 15:06:28,512 - *** Potential Issue: Condenser Airflow Restricted ***
+2026-07-29 10:04:32,642 - No fault detected
+2026-07-29 11:05:10,355 - Refrigerant Leak Detected/Evaporator Airflow Restricted
+2026-07-29 11:05:10,355 - Superheat: -39.5 C, Subcooling: 32.4 C
+2026-07-29 11:05:10,355 - Charge Diagnosis: Likely Overcharge or TEV Stuck Open - evaporator flooding, condenser backed up with liquid.
