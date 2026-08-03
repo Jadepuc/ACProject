@@ -1,25 +1,27 @@
-    import time
+import time
 import logging
+import sys
+from dataclasses import dataclass
+from datetime import datetime
 
-# logs every change and puts it in a txt file
+
+#logs every change and puts it in a txt file
 logging.basicConfig(
-    filename="faultslog.txt",
-    level=logging.INFO,
-    format="%(asctime)s - %(message)s"
+    filename="faults.log",
+    level = logging.INFO,
+    format = "%(asctime)s - %(message)s"
 )
 
 # Tolerance
 
-percentage = 0.05  # Enter percentage in decimal
+TOLERANCE_PERCENTAGE = 0.05 # Enter percentage in decimal
 
-
-def tolerance(measured, setpoint, percentage=percentage):
-    # returns true if measured within the setpoint
+def tolerance(measured, setpoint, percentage=TOLERANCE_PERCENTAGE):
+    #returns true if measured within the setpoint
     tol = abs(setpoint) * percentage
     return abs(measured - setpoint) <= tol
 
-
-# input validation for the values
+#input validation for the values
 def get_float(prompt):
     while True:
         try:
@@ -27,7 +29,10 @@ def get_float(prompt):
         except ValueError:
             print("Please enter a valid number.")
 
-#Refrigerant tables
+
+# PT tables for each refrigerant, already in bar/degC
+# R404A has glide so it needs 2 curves: bubble for subcooling, dew for superheat
+# everything else just uses one curve under "single"
 PT_TABLES = {
     "R410A": {
         "single": [
@@ -70,23 +75,19 @@ PT_TABLES = {
 }
 
 
-##creates list of refrigerants to be used
 def get_refrigerant():
-    #creates list of refrigerants to search through
+    # Take in refrigerant used for sustem
     valid = ", ".join(PT_TABLES.keys())
     while True:
-        #take entry of refrigerants
         entry = input(f"Enter refrigerant type ({valid}): ")
         entry = entry.strip().upper().replace("-", "").replace(" ", "")
-        #validation
         if entry in PT_TABLES:
             return entry
-        print(f"Unrecognised refrigerant/Refrigerant not present in Index. Please enter one of: {valid}")
+        print(f"Unrecognised refrigerant. Please enter one of: {valid}")
 
-##calculates the saturation temperature for each refrigerant
+
 def saturation_temp(pressure, pt_table):
-    #Calculate saturation temperature for given set datapoint
-
+    # Take saturation temperature in degC and make sure the pressure matches
     for (t1, p1), (t2, p2) in zip(pt_table, pt_table[1:]):
         if p1 <= pressure <= p2:
             return t1 + (pressure - p1) * (t2 - t1) / (p2 - p1)
@@ -94,40 +95,79 @@ def saturation_temp(pressure, pt_table):
 
 
 def get_pt_table(refrigerant, purpose):
-    """Return the correct PT curve for this refrigerant.
-    purpose is 'superheat' or 'subcooling' (only matters for blends)."""
+    # take correct PT curve for this refrigerant
+    # used in calculation for superheat and subcooling
     tables = PT_TABLES[refrigerant]
     if "single" in tables:
         return tables["single"]
-    return tables["dew"] if purpose == "superheat" else tables["bubble"] ## this is for later
+    return tables["dew"] if purpose == "superheat" else tables["bubble"]
 
 
 def take_setpoints():
-   #take set pressure points from user
-    high_pres = float(input("Enter the High Pressure value: "))
-    low_pres = float(input("Enter the Low Pressure value: "))
+    # Get the high and low pressure setpoints from the user
+    high_pres = get_float("Enter the High Pressure value (bar): ")
+    low_pres = get_float("Enter the Low Pressure value (bar): ")
     return high_pres, low_pres
 
 
+# client name/address get saved to a file so we don't type them in every run
+CLIENT_INFO_FILE = "client_info.txt"
+
+
+def load_client_info():
+    # load the saved client name/address if there is one
+    try:
+        with open(CLIENT_INFO_FILE, "r") as f:
+            lines = f.read().splitlines()
+        if len(lines) >= 2:
+            return lines[0], lines[1]
+    except FileNotFoundError:
+        pass
+    return None, None
+
+
+def save_client_info(name, address):
+    # save client name/address so it sticks around for next time
+    with open(CLIENT_INFO_FILE, "w") as f:
+        f.write(name + "\n")
+        f.write(address + "\n")
+
+
+def get_client_info(force_new=False):
+    # get the client name/address, reuse the saved one unless force_new is set
+    saved_name, saved_address = load_client_info()
+    if saved_name and saved_address and not force_new:
+        print(f"Using saved client: {saved_name}, {saved_address}")
+        return saved_name, saved_address
+
+    name = input("Enter Client Name: ")
+    address = input("Enter Client Address: ")
+    save_client_info(name, address)
+    return name, address
+
+
+def get_reading_time():
+    # get the current date, hour and minute
+    return datetime.now().strftime("%Y-%m-%d %H:%M")
+
+
 def take_readings():
-    """Get analogue pressures and line temperatures together, in one round,
-    since the temperatures are needed to compute superheat/subcooling
-    for the same instant as the pressure reading."""
+    ## Take in the readings for both high and low pressure
+    ## and suction and liquid temperature for calcculations
     analogue_high = get_float("Enter the Analogue High Input value (bar): ")
     analogue_low = get_float("Enter the Analogue Low value (bar): ")
     suction_temp = get_float("Enter the Suction Line Temperature (C): ")
     liquid_temp = get_float("Enter the Liquid Line Temperature (C): ")
     return analogue_high, analogue_low, suction_temp, liquid_temp
 
-
 def classify(value, setpoint):
+
     if tolerance(value, setpoint):
         return "equal"
     elif value > setpoint:
         return "above"
     else:
         return "below"
-
 
 FAULTS = {
     ("equal", "above"): "TEV Failure",
@@ -142,42 +182,46 @@ FAULTS = {
 }
 
 
-def fault_alarm(analogue_high, analogue_low, high_pres, low_pres):
-    high_state = classify(analogue_high, high_pres)
-    low_state = classify(analogue_low, low_pres)
+@dataclass
+class SystemConfig:
+    # holds all the setup settings so we're not passing a ton of args around
+    refrigerant: str
+    high_pres: float
+    low_pres: float
+    sh_range: tuple
+    sc_range: tuple
+    client_name: str
+    client_address: str
+
+
+def fault_alarm(analogue_high, analogue_low, config):
+    high_state = classify(analogue_high, config.high_pres)
+    low_state = classify(analogue_low, config.low_pres)
     message = FAULTS.get((high_state, low_state), "No fault detected")
     print(message)
     logging.info(message)
     return message
 
 
-# ---------------------------------------------------------------
-# How far a reading is allowed to drift from the user's target
-# superheat/subcooling before it's classified as "low" or "high".
-# This is a placeholder -- 2 degC is a reasonable starting point,
-# but tighten or loosen it to match how precisely your sensors and
-# service practice can realistically hold a reading.
-# ---------------------------------------------------------------
+# how far off target SH/SC can be before its called low or high, change if needed
 SH_SC_TOLERANCE = 2.0  # degC
 
 
 def take_target_sh_sc():
-    """Get the target superheat and subcooling for this specific system.
-    These come from the manufacturer's charging chart/nameplate data (for
-    TXV systems) or a target-superheat chart (for fixed-orifice systems) --
-    not a universal constant, since the correct target varies by system."""
+    # Take target superheat/subcooling for this system which varies by system
+    # isnt universal but is applied per system from relevant sources
     target_superheat = get_float("Enter the target Superheat value for this system (C): ")
     target_subcooling = get_float("Enter the target Subcooling value for this system (C): ")
     return target_superheat, target_subcooling
 
 
 def build_range(target, tolerance=SH_SC_TOLERANCE):
-    """Turn a single target value into a (low, high) acceptable band."""
+    ##take the sh/sc tolerance value and calculate the accepted ranges
     return (target - tolerance, target + tolerance)
 
 
 def calc_superheat(suction_temp, low_pressure, refrigerant):
-    """Superheat (degC) = actual suction line temp - saturated evaporating temp."""
+    # calculate superheat
     pt_table = get_pt_table(refrigerant, "superheat")
     sat_temp = saturation_temp(low_pressure, pt_table)
     if sat_temp is None:
@@ -186,7 +230,7 @@ def calc_superheat(suction_temp, low_pressure, refrigerant):
 
 
 def calc_subcooling(liquid_temp, high_pressure, refrigerant):
-    """Subcooling (degC) = saturated condensing temp - actual liquid line temp."""
+    # calculate subcooling in degC with SatCondensTemp - actualliquidline temp
     pt_table = get_pt_table(refrigerant, "subcooling")
     sat_temp = saturation_temp(high_pressure, pt_table)
     if sat_temp is None:
@@ -195,8 +239,7 @@ def calc_subcooling(liquid_temp, high_pressure, refrigerant):
 
 
 def classify_sh_sc(value, normal_range):
-    """Classify a superheat/subcooling reading as low, normal, or high
-    relative to the target range."""
+    # determine if superheat/subcooling is in required range or not
     low, high = normal_range
     if value < low:
         return "low"
@@ -206,24 +249,14 @@ def classify_sh_sc(value, normal_range):
         return "normal"
 
 
-# ---------------------------------------------------------------
-# Standard superheat/subcooling charge-diagnosis matrix.
-# This is the same underlying logic taught across HVACR service
-# training: pressure alone can be misleading, but superheat and
-# subcooling together reveal whether the evaporator/condenser are
-# actually starved or flooded with refrigerant. Combinations not
-# listed here don't match a single well-known pattern, so they
-# fall back to a generic "inconclusive" message rather than a
-# guessed diagnosis.
-# ---------------------------------------------------------------
+# standard SH/SC charge diagnosis combos, from normal HVACR service training
+# anything not listed here just falls back to inconclusive
 SH_SC_DIAGNOSIS = {
-    ("high",
-     "low"): "Likely Undercharge or Refrigerant Leak - evaporator starved, condenser under-filled. Find the leak before adding refrigerant.",
-    ("low", "high"): "Likely Overcharge or TEV Stuck Open - evaporator flooding, condenser backed up with liquid.",
-    ("high",
-     "normal"): "Possible Restriction (metering device/filter-drier) or Low Evaporator Airflow - charge appears adequate.",
+    ("high", "low"): "Likely Undercharge or Refrigerant Leak - evaporator starved, condenser under-filled. Find the leak before adding refrigerant.",
+    ("low", "high"): "Likely Overcharge or TXV Stuck Open - evaporator flooding, condenser backed up with liquid.",
+    ("high", "normal"): "Possible Restriction (metering device/filter-drier) or Low Evaporator Airflow - charge appears adequate.",
     ("high", "high"): "Possible Liquid-Line Restriction - refrigerant is backing up before the metering device.",
-    ("low", "normal"): "Floodback Risk - evaporator may be overfed; check TEV and sensing bulb.",
+    ("low", "normal"): "Floodback Risk - evaporator may be overfed; check TXV and sensing bulb.",
     ("normal", "low"): "Borderline Undercharge - TXV masking a low subcooling reading by throttling closed.",
     ("normal", "high"): "Possible Overcharge or Condenser Issue - check for a dirty coil or non-condensables.",
     ("normal", "normal"): "Superheat and subcooling both within normal range - no charge-related fault indicated.",
@@ -231,8 +264,7 @@ SH_SC_DIAGNOSIS = {
 
 
 def diagnose_charge(superheat, subcooling, sh_range, sc_range):
-    """Look up the standard charge-diagnosis message for this SH/SC pair,
-    classified against this system's own target ranges."""
+    # look up the diagnosis for this SH/SC combo against the target ranges
     sh_state = classify_sh_sc(superheat, sh_range)
     sc_state = classify_sh_sc(subcooling, sc_range)
     return SH_SC_DIAGNOSIS.get(
@@ -241,11 +273,10 @@ def diagnose_charge(superheat, subcooling, sh_range, sc_range):
     )
 
 
-def report_superheat_subcooling(suction_temp, liquid_temp, low_pressure, high_pressure, refrigerant, sh_range,
-                                sc_range):
-    """Calculate, print, log, and diagnose superheat and subcooling."""
-    superheat = calc_superheat(suction_temp, low_pressure, refrigerant)
-    subcooling = calc_subcooling(liquid_temp, high_pressure, refrigerant)
+def report_superheat_subcooling(suction_temp, liquid_temp, low_pressure, high_pressure, config):
+    # calculate, print, log and diagnose superheat and subcooling
+    superheat = calc_superheat(suction_temp, low_pressure, config.refrigerant)
+    subcooling = calc_subcooling(liquid_temp, high_pressure, config.refrigerant)
 
     if superheat is None or subcooling is None:
         print("Superheat/Subcooling: pressure reading is outside the PT table range, cannot calculate.")
@@ -254,7 +285,7 @@ def report_superheat_subcooling(suction_temp, liquid_temp, low_pressure, high_pr
     print(f"Superheat: {superheat:.1f} C | Subcooling: {subcooling:.1f} C")
     logging.info(f"Superheat: {superheat:.1f} C, Subcooling: {subcooling:.1f} C")
 
-    diagnosis = diagnose_charge(superheat, subcooling, sh_range, sc_range)
+    diagnosis = diagnose_charge(superheat, subcooling, config.sh_range, config.sc_range)
     print(f"  Charge Diagnosis: {diagnosis}")
     logging.info(f"Charge Diagnosis: {diagnosis}")
 
@@ -267,18 +298,23 @@ def set_interval():
     print(f"Interval set to {interval_hours} hours ({interval_seconds:.0f} seconds).")
     return interval_seconds
 
-
 CONSECUTIVE_READINGS_REQUIRED = 3
 
 
-def monitor(high_pres, low_pres, interval_seconds, refrigerant, sh_range, sc_range):
+def monitor(config, interval_seconds):
     last_message = None
     consecutive_count = 0
     while True:
         analogue_high, analogue_low, suction_temp, liquid_temp = take_readings()
 
-        # Layer 1: hard-limit pressure check against the setpoints
-        message = fault_alarm(analogue_high, analogue_low, high_pres, low_pres)
+        # note down who this reading is for and when it was taken
+        reading_time = get_reading_time()
+        header = f"Client: {config.client_name}, {config.client_address} | Reading Time: {reading_time}"
+        print(header)
+        logging.info(header)
+
+        # check pressure against the setpoints
+        message = fault_alarm(analogue_high, analogue_low, config)
         if message == last_message and message != "No fault detected":
             consecutive_count += 1
         else:
@@ -288,20 +324,17 @@ def monitor(high_pres, low_pres, interval_seconds, refrigerant, sh_range, sc_ran
             print(f"*** CONFIRMED ALARM: {message} ***")
             logging.warning(f"CONFIRMED ALARM: {message}")
 
-        # Layer 2: superheat/subcooling charge diagnosis (more accurate,
-        # since it reflects what's actually happening inside the
-        # evaporator/condenser rather than just comparing raw pressure
-        # to a fixed setpoint), judged against THIS system's own targets
-        report_superheat_subcooling(suction_temp, liquid_temp, analogue_low, analogue_high, refrigerant, sh_range,
-                                    sc_range)
+        # check superheat/subcooling against this system's own targets
+        report_superheat_subcooling(suction_temp, liquid_temp, analogue_low, analogue_high, config)
 
         stop = input("Press Enter to continue, or type 'q' to quit: ")
         if stop.strip().lower() == "q":
             print("Monitoring stopped.")
             break
 
-
 def main():
+    force_new_client = "--new-client" in sys.argv
+    client_name, client_address = get_client_info(force_new=force_new_client)
     refrigerant = get_refrigerant()
     high_pres, low_pres = take_setpoints()
     target_superheat, target_subcooling = take_target_sh_sc()
@@ -310,10 +343,17 @@ def main():
     print(f"Target Superheat: {target_superheat} C (accepting {sh_range[0]:.1f}-{sh_range[1]:.1f} C)")
     print(f"Target Subcooling: {target_subcooling} C (accepting {sc_range[0]:.1f}-{sc_range[1]:.1f} C)")
     interval_seconds = set_interval()
-    monitor(high_pres, low_pres, interval_seconds, refrigerant, sh_range, sc_range)
 
+    config = SystemConfig(
+        refrigerant=refrigerant,
+        high_pres=high_pres,
+        low_pres=low_pres,
+        sh_range=sh_range,
+        sc_range=sc_range,
+        client_name=client_name,
+        client_address=client_address,
+    )
+    monitor(config, interval_seconds)
 
 if __name__ == "__main__":
     main()
-
-
