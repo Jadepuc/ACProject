@@ -12,6 +12,10 @@ logging.basicConfig(
     format = "%(asctime)s - %(message)s"
 )
 
+logging.basicConfig(
+
+)
+
 # Tolerance
 
 TOLERANCE_PERCENTAGE = 0.05 # Enter percentage in decimal

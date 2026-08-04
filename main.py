@@ -42,7 +42,7 @@ def take_analogue_input():
     analogue_low = float(input("Enter the Analogue Low value: "))
     return analogue_high, analogue_low
 
-def classify(value, setpoint):
+def classifym(value, setpoint):
 
     if tolerance(value, setpoint):
         return "equal"
