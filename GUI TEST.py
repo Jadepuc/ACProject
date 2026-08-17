@@ -105,13 +105,6 @@ def get_pt_table(refrigerant, purpose):
     return tables["dew"] if purpose == "superheat" else tables["bubble"]
 
 
-def take_setpoints():
-    # Get the high and low pressure setpoints from the user
-    high_pres = get_float("Enter the High Pressure value (bar): ")
-    low_pres = get_float("Enter the Low Pressure value (bar): ")
-    return high_pres, low_pres
-
-
 # client name/address get saved to a file so we don't type them in every run
 CLIENT_INFO_FILE = "client_info.txt"
 
@@ -171,9 +164,103 @@ def save_target_sh_sc(target_superheat, target_subcooling):
         f.write(f"{target_subcooling}\n")
 
 
+# high/low pressure setpoints get saved to a file too, same idea
+PRESSURE_SETPOINTS_FILE = "pressure_setpoints.txt"
+
+
+def load_pressure_setpoints():
+    # load the saved high/low pressure setpoints if there is one
+    try:
+        with open(PRESSURE_SETPOINTS_FILE, "r") as f:
+            lines = f.read().splitlines()
+        if len(lines) >= 2:
+            return float(lines[0]), float(lines[1])
+    except (FileNotFoundError, ValueError):
+        pass
+    return None, None
+
+
+def save_pressure_setpoints(high_pres, low_pres):
+    # save high/low pressure setpoints so they stick around for next time
+    with open(PRESSURE_SETPOINTS_FILE, "w") as f:
+        f.write(f"{high_pres}\n")
+        f.write(f"{low_pres}\n")
+
+
+# check interval gets saved to a file too, same idea
+INTERVAL_FILE = "interval.txt"
+
+
+def load_interval():
+    # load the saved interval (in hours) if there is one
+    try:
+        with open(INTERVAL_FILE, "r") as f:
+            lines = f.read().splitlines()
+        if len(lines) >= 1:
+            return float(lines[0])
+    except (FileNotFoundError, ValueError):
+        pass
+    return None
+
+
+def save_interval(interval_hours):
+    # save the interval so it sticks around for next time
+    with open(INTERVAL_FILE, "w") as f:
+        f.write(f"{interval_hours}\n")
+
+
 def get_reading_time():
     # get the current date, hour and minute
     return datetime.now().strftime("%Y-%m-%d %H:%M")
+
+
+def parse_and_validate_temp_inputs(suction_str, liquid_str):
+    # check the raw temp popup values, returns (values_dict, error_message)
+    try:
+        suction_temp = float(suction_str)
+        liquid_temp = float(liquid_str)
+    except ValueError:
+        return None, "Suction/Liquid temperature must be numbers."
+    return {"suction_temp": suction_temp, "liquid_temp": liquid_temp}, None
+
+
+def collect_temperature_readings_gui():
+    # small popup for suction/liquid line temp, shown once per reading cycle
+    # (analogue pressure stays on the terminal for now -- real sensor later)
+    result = {}
+
+    root = tk.Tk()
+    root.title("Temperature Reading")
+    pad = {"padx": 10, "pady": 6}
+
+    tk.Label(root, text="Suction Line Temperature (C):").grid(row=0, column=0, sticky="e", **pad)
+    suction_entry = tk.Entry(root, width=20)
+    suction_entry.grid(row=0, column=1, **pad)
+    suction_entry.focus()
+
+    tk.Label(root, text="Liquid Line Temperature (C):").grid(row=1, column=0, sticky="e", **pad)
+    liquid_entry = tk.Entry(root, width=20)
+    liquid_entry.grid(row=1, column=1, **pad)
+
+    error_label = tk.Label(root, text="", fg="red")
+    error_label.grid(row=2, column=0, columnspan=2)
+
+    def on_submit():
+        values, error = parse_and_validate_temp_inputs(suction_entry.get(), liquid_entry.get())
+        if error:
+            error_label.config(text=error)
+            return
+        result.update(values)
+        root.destroy()
+
+    tk.Button(root, text="Submit", command=on_submit).grid(row=3, column=0, columnspan=2, pady=10)
+
+    root.mainloop()
+
+    if not result:
+        raise SystemExit("Temperature reading cancelled.")
+
+    return result["suction_temp"], result["liquid_temp"]
 
 
 def take_readings():
@@ -181,8 +268,7 @@ def take_readings():
     ## and suction and liquid temperature for calcculations
     analogue_high = get_float("Enter the Analogue High Input value (bar): ")
     analogue_low = get_float("Enter the Analogue Low value (bar): ")
-    suction_temp = get_float("Enter the Suction Line Temperature (C): ")
-    liquid_temp = get_float("Enter the Liquid Line Temperature (C): ")
+    suction_temp, liquid_temp = collect_temperature_readings_gui()
     return analogue_high, analogue_low, suction_temp, liquid_temp
 
 def classify(value, setpoint):
@@ -317,12 +403,6 @@ def report_superheat_subcooling(suction_temp, liquid_temp, low_pressure, high_pr
     return superheat, subcooling
 
 
-def set_interval():
-    interval_hours = get_float("Enter the interval value (in hours): ")
-    interval_seconds = interval_hours * 3600
-    print(f"Interval set to {interval_hours} hours ({interval_seconds:.0f} seconds).")
-    return interval_seconds
-
 CONSECUTIVE_READINGS_REQUIRED = 3
 
 
@@ -357,7 +437,7 @@ def monitor(config, interval_seconds):
             print("Monitoring stopped.")
             break
 
-def parse_and_validate_setup_inputs(name, address, refrigerant, superheat_str, subcooling_str):
+def parse_and_validate_setup_inputs(name, address, refrigerant, high_pres_str, low_pres_str, superheat_str, subcooling_str, interval_str):
     # check the raw GUI field values and turn them into real values
     # returns (values_dict, error_message) -- error_message is None if all good
     name = name.strip()
@@ -368,28 +448,42 @@ def parse_and_validate_setup_inputs(name, address, refrigerant, superheat_str, s
     if refrigerant not in PT_TABLES:
         return None, "Please select a valid refrigerant."
     try:
+        high_pres = float(high_pres_str)
+        low_pres = float(low_pres_str)
+    except ValueError:
+        return None, "High/Low Pressure must be numbers."
+    try:
         target_superheat = float(superheat_str)
         target_subcooling = float(subcooling_str)
     except ValueError:
         return None, "Superheat/Subcooling must be numbers."
+    try:
+        interval_hours = float(interval_str)
+    except ValueError:
+        return None, "Interval must be a number."
 
     values = {
         "client_name": name,
         "client_address": address,
         "refrigerant": refrigerant,
+        "high_pres": high_pres,
+        "low_pres": low_pres,
         "target_superheat": target_superheat,
         "target_subcooling": target_subcooling,
+        "interval_hours": interval_hours,
     }
     return values, None
 
 
 def collect_setup_gui(force_new_client=False):
-    # open one form for client name/address, refrigerant, and target SH/SC
+    # open one form for client info, refrigerant, pressure setpoints, and target SH/SC
     # returns the same values the CLI prompts for these would have
     saved_name, saved_address = load_client_info()
     if force_new_client:
         saved_name, saved_address = None, None
+    saved_high_pres, saved_low_pres = load_pressure_setpoints()
     saved_superheat, saved_subcooling = load_target_sh_sc()
+    saved_interval = load_interval()
 
     result = {}
 
@@ -417,25 +511,45 @@ def collect_setup_gui(force_new_client=False):
     )
     refrigerant_menu.grid(row=2, column=1, **pad)
 
-    tk.Label(root, text="Target Superheat (C):").grid(row=3, column=0, sticky="e", **pad)
+    tk.Label(root, text="High Pressure limit (bar):").grid(row=3, column=0, sticky="e", **pad)
+    high_pres_entry = tk.Entry(root, width=30)
+    high_pres_entry.grid(row=3, column=1, **pad)
+    if saved_high_pres is not None:
+        high_pres_entry.insert(0, str(saved_high_pres))
+
+    tk.Label(root, text="Low Pressure limit (bar):").grid(row=4, column=0, sticky="e", **pad)
+    low_pres_entry = tk.Entry(root, width=30)
+    low_pres_entry.grid(row=4, column=1, **pad)
+    if saved_low_pres is not None:
+        low_pres_entry.insert(0, str(saved_low_pres))
+
+    tk.Label(root, text="Target Superheat (C):").grid(row=5, column=0, sticky="e", **pad)
     superheat_entry = tk.Entry(root, width=30)
-    superheat_entry.grid(row=3, column=1, **pad)
+    superheat_entry.grid(row=5, column=1, **pad)
     if saved_superheat is not None:
         superheat_entry.insert(0, str(saved_superheat))
 
-    tk.Label(root, text="Target Subcooling (C):").grid(row=4, column=0, sticky="e", **pad)
+    tk.Label(root, text="Target Subcooling (C):").grid(row=6, column=0, sticky="e", **pad)
     subcooling_entry = tk.Entry(root, width=30)
-    subcooling_entry.grid(row=4, column=1, **pad)
+    subcooling_entry.grid(row=6, column=1, **pad)
     if saved_subcooling is not None:
         subcooling_entry.insert(0, str(saved_subcooling))
 
+    tk.Label(root, text="Interval (hours):").grid(row=7, column=0, sticky="e", **pad)
+    interval_entry = tk.Entry(root, width=30)
+    interval_entry.grid(row=7, column=1, **pad)
+    if saved_interval is not None:
+        interval_entry.insert(0, str(saved_interval))
+
     error_label = tk.Label(root, text="", fg="red")
-    error_label.grid(row=5, column=0, columnspan=2)
+    error_label.grid(row=8, column=0, columnspan=2)
 
     def on_submit():
         values, error = parse_and_validate_setup_inputs(
             name_entry.get(), address_entry.get(), refrigerant_var.get(),
+            high_pres_entry.get(), low_pres_entry.get(),
             superheat_entry.get(), subcooling_entry.get(),
+            interval_entry.get(),
         )
         if error:
             error_label.config(text=error)
@@ -443,7 +557,7 @@ def collect_setup_gui(force_new_client=False):
         result.update(values)
         root.destroy()
 
-    tk.Button(root, text="Continue", command=on_submit).grid(row=6, column=0, columnspan=2, pady=10)
+    tk.Button(root, text="Continue", command=on_submit).grid(row=9, column=0, columnspan=2, pady=10)
 
     root.mainloop()
 
@@ -451,25 +565,30 @@ def collect_setup_gui(force_new_client=False):
         raise SystemExit("Setup cancelled.")
 
     save_client_info(result["client_name"], result["client_address"])
+    save_pressure_setpoints(result["high_pres"], result["low_pres"])
     save_target_sh_sc(result["target_superheat"], result["target_subcooling"])
+    save_interval(result["interval_hours"])
     return (
         result["client_name"],
         result["client_address"],
         result["refrigerant"],
+        result["high_pres"],
+        result["low_pres"],
         result["target_superheat"],
         result["target_subcooling"],
+        result["interval_hours"],
     )
 
 
 def main():
     force_new_client = "--new-client" in sys.argv
-    client_name, client_address, refrigerant, target_superheat, target_subcooling = collect_setup_gui(force_new_client)
-    high_pres, low_pres = take_setpoints()
+    client_name, client_address, refrigerant, high_pres, low_pres, target_superheat, target_subcooling, interval_hours = collect_setup_gui(force_new_client)
     sh_range = build_range(target_superheat)
     sc_range = build_range(target_subcooling)
+    interval_seconds = interval_hours * 3600
     print(f"Target Superheat: {target_superheat} C (accepting {sh_range[0]:.1f}-{sh_range[1]:.1f} C)")
     print(f"Target Subcooling: {target_subcooling} C (accepting {sc_range[0]:.1f}-{sc_range[1]:.1f} C)")
-    interval_seconds = set_interval()
+    print(f"Interval set to {interval_hours} hours ({interval_seconds:.0f} seconds).")
 
     config = SystemConfig(
         refrigerant=refrigerant,
