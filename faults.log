@@ -1,0 +1,7 @@
+2026-07-29 12:45:16,242 - Possible Partial High-Side Fault (needs review)
+2026-08-03 13:28:26,439 - Client: Josh, KY12 8AB | Reading Time: 2026-08-03 13:28
+2026-08-03 13:28:26,440 - Condenser Airflow Restricted
+2026-08-17 10:45:19,333 - Client: Josh, KY12 8AB | Reading Time: 2026-08-17 10:45
+2026-08-17 10:45:19,333 - Condenser Airflow Restricted
+2026-08-17 10:45:19,333 - Superheat: -4.2 C, Subcooling: 30.5 C
+2026-08-17 10:45:19,333 - Charge Diagnosis: Likely Overcharge or TXV Stuck Open - evaporator flooding, condenser backed up with liquid.
