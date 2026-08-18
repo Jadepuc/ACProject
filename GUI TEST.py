@@ -1,4 +1,3 @@
-import time
 import logging
 import sys
 from dataclasses import dataclass
@@ -14,12 +13,19 @@ logging.basicConfig(
     format = "%(asctime)s - %(message)s"
 )
 
+
+# print to the terminal and write the same line to the log file
+def log_and_print(message, level=logging.INFO):
+    print(message)
+    logging.log(level, message)
+
+
 # Tolerance
 
 TOLERANCE_PERCENTAGE = 0.05 # Enter percentage in decimal
 
+#returns true if measured within the setpoint
 def tolerance(measured, setpoint, percentage=TOLERANCE_PERCENTAGE):
-    #returns true if measured within the setpoint
     tol = abs(setpoint) * percentage
     return abs(measured - setpoint) <= tol
 
@@ -77,208 +83,85 @@ PT_TABLES = {
 }
 
 
-def get_refrigerant():
-    # Take in refrigerant used for sustem
-    valid = ", ".join(PT_TABLES.keys())
-    while True:
-        entry = input(f"Enter refrigerant type ({valid}): ")
-        entry = entry.strip().upper().replace("-", "").replace(" ", "")
-        if entry in PT_TABLES:
-            return entry
-        print(f"Unrecognised refrigerant. Please enter one of: {valid}")
-
-
+# Take saturation temperature in degC and make sure the pressure matches
 def saturation_temp(pressure, pt_table):
-    # Take saturation temperature in degC and make sure the pressure matches
     for (t1, p1), (t2, p2) in zip(pt_table, pt_table[1:]):
         if p1 <= pressure <= p2:
             return t1 + (pressure - p1) * (t2 - t1) / (p2 - p1)
     return None  # pressure fell outside the table's range
 
 
+# take correct PT curve for this refrigerant
+# used in calculation for superheat and subcooling
 def get_pt_table(refrigerant, purpose):
-    # take correct PT curve for this refrigerant
-    # used in calculation for superheat and subcooling
     tables = PT_TABLES[refrigerant]
     if "single" in tables:
         return tables["single"]
     return tables["dew"] if purpose == "superheat" else tables["bubble"]
 
 
-# client name/address get saved to a file so we don't type them in every run
-CLIENT_INFO_FILE = "client_info.txt"
+# all the one-time setup values (client info, setpoints, targets, interval)
+# get saved together in one file so they only need typing in once
+SETUP_FILE = "setup_config.txt"
+SETUP_FIELDS = [
+    "client_name", "client_address", "high_pres", "low_pres",
+    "target_superheat", "target_subcooling", "interval_hours",
+]
+SETUP_NUMERIC_FIELDS = {"high_pres", "low_pres", "target_superheat", "target_subcooling", "interval_hours"}
 
 
-def load_client_info():
-    # load the saved client name/address if there is one
+# load whatever setup values were saved last time, as a dict
+# missing/corrupt fields are just left out, so the GUI leaves them blank
+def load_setup():
     try:
-        with open(CLIENT_INFO_FILE, "r") as f:
+        with open(SETUP_FILE, "r") as f:
             lines = f.read().splitlines()
-        if len(lines) >= 2:
-            return lines[0], lines[1]
     except FileNotFoundError:
-        pass
-    return None, None
+        return {}
+
+    saved = {}
+    for field, value in zip(SETUP_FIELDS, lines):
+        if field in SETUP_NUMERIC_FIELDS:
+            try:
+                saved[field] = float(value)
+            except ValueError:
+                continue
+        else:
+            saved[field] = value
+    return saved
 
 
-def save_client_info(name, address):
-    # save client name/address so it sticks around for next time
-    with open(CLIENT_INFO_FILE, "w") as f:
-        f.write(name + "\n")
-        f.write(address + "\n")
+# save all the setup values together so they stick around for next time
+def save_setup(values):
+    with open(SETUP_FILE, "w") as f:
+        for field in SETUP_FIELDS:
+            f.write(f"{values[field]}\n")
 
 
-def get_client_info(force_new=False):
-    # get the client name/address, reuse the saved one unless force_new is set
-    saved_name, saved_address = load_client_info()
-    if saved_name and saved_address and not force_new:
-        print(f"Using saved client: {saved_name}, {saved_address}")
-        return saved_name, saved_address
-
-    name = input("Enter Client Name: ")
-    address = input("Enter Client Address: ")
-    save_client_info(name, address)
-    return name, address
-
-
-# target superheat/subcooling get saved to a file too, same idea as client info
-TARGET_SH_SC_FILE = "target_sh_sc.txt"
-
-
-def load_target_sh_sc():
-    # load the saved target superheat/subcooling if there is one
-    try:
-        with open(TARGET_SH_SC_FILE, "r") as f:
-            lines = f.read().splitlines()
-        if len(lines) >= 2:
-            return float(lines[0]), float(lines[1])
-    except (FileNotFoundError, ValueError):
-        pass
-    return None, None
-
-
-def save_target_sh_sc(target_superheat, target_subcooling):
-    # save target superheat/subcooling so it sticks around for next time
-    with open(TARGET_SH_SC_FILE, "w") as f:
-        f.write(f"{target_superheat}\n")
-        f.write(f"{target_subcooling}\n")
-
-
-# high/low pressure setpoints get saved to a file too, same idea
-PRESSURE_SETPOINTS_FILE = "pressure_setpoints.txt"
-
-
-def load_pressure_setpoints():
-    # load the saved high/low pressure setpoints if there is one
-    try:
-        with open(PRESSURE_SETPOINTS_FILE, "r") as f:
-            lines = f.read().splitlines()
-        if len(lines) >= 2:
-            return float(lines[0]), float(lines[1])
-    except (FileNotFoundError, ValueError):
-        pass
-    return None, None
-
-
-def save_pressure_setpoints(high_pres, low_pres):
-    # save high/low pressure setpoints so they stick around for next time
-    with open(PRESSURE_SETPOINTS_FILE, "w") as f:
-        f.write(f"{high_pres}\n")
-        f.write(f"{low_pres}\n")
-
-
-# check interval gets saved to a file too, same idea
-INTERVAL_FILE = "interval.txt"
-
-
-def load_interval():
-    # load the saved interval (in hours) if there is one
-    try:
-        with open(INTERVAL_FILE, "r") as f:
-            lines = f.read().splitlines()
-        if len(lines) >= 1:
-            return float(lines[0])
-    except (FileNotFoundError, ValueError):
-        pass
-    return None
-
-
-def save_interval(interval_hours):
-    # save the interval so it sticks around for next time
-    with open(INTERVAL_FILE, "w") as f:
-        f.write(f"{interval_hours}\n")
-
-
+# get the current date, hour and minute
 def get_reading_time():
-    # get the current date, hour and minute
     return datetime.now().strftime("%Y-%m-%d %H:%M")
 
 
-def parse_and_validate_temp_inputs(suction_str, liquid_str):
-    # check the raw temp popup values, returns (values_dict, error_message)
-    try:
-        suction_temp = float(suction_str)
-        liquid_temp = float(liquid_str)
-    except ValueError:
-        return None, "Suction/Liquid temperature must be numbers."
-    return {"suction_temp": suction_temp, "liquid_temp": liquid_temp}, None
-
-
-def collect_temperature_readings_gui():
-    # small popup for suction/liquid line temp, shown once per reading cycle
-    # (analogue pressure stays on the terminal for now -- real sensor later)
-    result = {}
-
-    root = tk.Tk()
-    root.title("Temperature Reading")
-    pad = {"padx": 10, "pady": 6}
-
-    tk.Label(root, text="Suction Line Temperature (C):").grid(row=0, column=0, sticky="e", **pad)
-    suction_entry = tk.Entry(root, width=20)
-    suction_entry.grid(row=0, column=1, **pad)
-    suction_entry.focus()
-
-    tk.Label(root, text="Liquid Line Temperature (C):").grid(row=1, column=0, sticky="e", **pad)
-    liquid_entry = tk.Entry(root, width=20)
-    liquid_entry.grid(row=1, column=1, **pad)
-
-    error_label = tk.Label(root, text="", fg="red")
-    error_label.grid(row=2, column=0, columnspan=2)
-
-    def on_submit():
-        values, error = parse_and_validate_temp_inputs(suction_entry.get(), liquid_entry.get())
-        if error:
-            error_label.config(text=error)
-            return
-        result.update(values)
-        root.destroy()
-
-    tk.Button(root, text="Submit", command=on_submit).grid(row=3, column=0, columnspan=2, pady=10)
-
-    root.mainloop()
-
-    if not result:
-        raise SystemExit("Temperature reading cancelled.")
-
-    return result["suction_temp"], result["liquid_temp"]
-
-
+## Take in the readings for both high and low pressure
+## and suction and liquid temperature for calcculations
 def take_readings():
-    ## Take in the readings for both high and low pressure
-    ## and suction and liquid temperature for calcculations
     analogue_high = get_float("Enter the Analogue High Input value (bar): ")
     analogue_low = get_float("Enter the Analogue Low value (bar): ")
-    suction_temp, liquid_temp = collect_temperature_readings_gui()
+    suction_temp = get_float("Enter the Analogue Suction Line Temperature (C): ")
+    liquid_temp = get_float("Enter the Analogue Liquid Line Temperature (C): ")
     return analogue_high, analogue_low, suction_temp, liquid_temp
 
-def classify(value, setpoint):
 
+# says if a value is equal to, above, or below the setpoint
+def classify(value, setpoint):
     if tolerance(value, setpoint):
         return "equal"
     elif value > setpoint:
         return "above"
     else:
         return "below"
+
 
 FAULTS = {
     ("equal", "above"): "TEV Failure",
@@ -293,9 +176,9 @@ FAULTS = {
 }
 
 
+# holds all the setup settings so we're not passing a ton of args around
 @dataclass
 class SystemConfig:
-    # holds all the setup settings so we're not passing a ton of args around
     refrigerant: str
     high_pres: float
     low_pres: float
@@ -305,12 +188,12 @@ class SystemConfig:
     client_address: str
 
 
+# check the pressures against setpoints and report any fault
 def fault_alarm(analogue_high, analogue_low, config):
     high_state = classify(analogue_high, config.high_pres)
     low_state = classify(analogue_low, config.low_pres)
     message = FAULTS.get((high_state, low_state), "No fault detected")
-    print(message)
-    logging.info(message)
+    log_and_print(message)
     return message
 
 
@@ -318,21 +201,13 @@ def fault_alarm(analogue_high, analogue_low, config):
 SH_SC_TOLERANCE = 2.0  # degC
 
 
-def take_target_sh_sc():
-    # Take target superheat/subcooling for this system which varies by system
-    # isnt universal but is applied per system from relevant sources
-    target_superheat = get_float("Enter the target Superheat value for this system (C): ")
-    target_subcooling = get_float("Enter the target Subcooling value for this system (C): ")
-    return target_superheat, target_subcooling
-
-
+##take the sh/sc tolerance value and calculate the accepted ranges
 def build_range(target, tolerance=SH_SC_TOLERANCE):
-    ##take the sh/sc tolerance value and calculate the accepted ranges
     return (target - tolerance, target + tolerance)
 
 
+# calculate superheat
 def calc_superheat(suction_temp, low_pressure, refrigerant):
-    # calculate superheat
     pt_table = get_pt_table(refrigerant, "superheat")
     sat_temp = saturation_temp(low_pressure, pt_table)
     if sat_temp is None:
@@ -340,8 +215,8 @@ def calc_superheat(suction_temp, low_pressure, refrigerant):
     return suction_temp - sat_temp
 
 
+# calculate subcooling in degC with SatCondensTemp - actualliquidline temp
 def calc_subcooling(liquid_temp, high_pressure, refrigerant):
-    # calculate subcooling in degC with SatCondensTemp - actualliquidline temp
     pt_table = get_pt_table(refrigerant, "subcooling")
     sat_temp = saturation_temp(high_pressure, pt_table)
     if sat_temp is None:
@@ -349,8 +224,8 @@ def calc_subcooling(liquid_temp, high_pressure, refrigerant):
     return sat_temp - liquid_temp
 
 
+# determine if superheat/subcooling is in required range or not
 def classify_sh_sc(value, normal_range):
-    # determine if superheat/subcooling is in required range or not
     low, high = normal_range
     if value < low:
         return "low"
@@ -374,8 +249,8 @@ SH_SC_DIAGNOSIS = {
 }
 
 
+# look up the diagnosis for this SH/SC combo against the target ranges
 def diagnose_charge(superheat, subcooling, sh_range, sc_range):
-    # look up the diagnosis for this SH/SC combo against the target ranges
     sh_state = classify_sh_sc(superheat, sh_range)
     sc_state = classify_sh_sc(subcooling, sc_range)
     return SH_SC_DIAGNOSIS.get(
@@ -384,8 +259,8 @@ def diagnose_charge(superheat, subcooling, sh_range, sc_range):
     )
 
 
+# calculate, print, log and diagnose superheat and subcooling
 def report_superheat_subcooling(suction_temp, liquid_temp, low_pressure, high_pressure, config):
-    # calculate, print, log and diagnose superheat and subcooling
     superheat = calc_superheat(suction_temp, low_pressure, config.refrigerant)
     subcooling = calc_subcooling(liquid_temp, high_pressure, config.refrigerant)
 
@@ -393,12 +268,10 @@ def report_superheat_subcooling(suction_temp, liquid_temp, low_pressure, high_pr
         print("Superheat/Subcooling: pressure reading is outside the PT table range, cannot calculate.")
         return superheat, subcooling
 
-    print(f"Superheat: {superheat:.1f} C | Subcooling: {subcooling:.1f} C")
-    logging.info(f"Superheat: {superheat:.1f} C, Subcooling: {subcooling:.1f} C")
+    log_and_print(f"Superheat: {superheat:.1f} C | Subcooling: {subcooling:.1f} C")
 
     diagnosis = diagnose_charge(superheat, subcooling, config.sh_range, config.sc_range)
-    print(f"  Charge Diagnosis: {diagnosis}")
-    logging.info(f"Charge Diagnosis: {diagnosis}")
+    log_and_print(f"  Charge Diagnosis: {diagnosis}")
 
     return superheat, subcooling
 
@@ -406,6 +279,7 @@ def report_superheat_subcooling(suction_temp, liquid_temp, low_pressure, high_pr
 CONSECUTIVE_READINGS_REQUIRED = 3
 
 
+# main loop -- take a reading, check for faults, repeat until user quits
 def monitor(config, interval_seconds):
     last_message = None
     consecutive_count = 0
@@ -415,8 +289,7 @@ def monitor(config, interval_seconds):
         # note down who this reading is for and when it was taken
         reading_time = get_reading_time()
         header = f"Client: {config.client_name}, {config.client_address} | Reading Time: {reading_time}"
-        print(header)
-        logging.info(header)
+        log_and_print(header)
 
         # check pressure against the setpoints
         message = fault_alarm(analogue_high, analogue_low, config)
@@ -426,8 +299,7 @@ def monitor(config, interval_seconds):
             consecutive_count = 1
         last_message = message
         if consecutive_count == CONSECUTIVE_READINGS_REQUIRED:
-            print(f"*** CONFIRMED ALARM: {message} ***")
-            logging.warning(f"CONFIRMED ALARM: {message}")
+            log_and_print(f"*** CONFIRMED ALARM: {message} ***", level=logging.WARNING)
 
         # check superheat/subcooling against this system's own targets
         report_superheat_subcooling(suction_temp, liquid_temp, analogue_low, analogue_high, config)
@@ -437,9 +309,22 @@ def monitor(config, interval_seconds):
             print("Monitoring stopped.")
             break
 
+
+# try to parse a list of (field_name, raw_string) pairs as floats
+# returns (dict of field_name -> float, None) or (None, error_message)
+def parse_floats(pairs, error_message):
+    parsed = {}
+    for field, value_str in pairs:
+        try:
+            parsed[field] = float(value_str)
+        except ValueError:
+            return None, error_message
+    return parsed, None
+
+
+# check the raw GUI field values and turn them into real values
+# returns (values_dict, error_message) -- error_message is None if all good
 def parse_and_validate_setup_inputs(name, address, refrigerant, high_pres_str, low_pres_str, superheat_str, subcooling_str, interval_str):
-    # check the raw GUI field values and turn them into real values
-    # returns (values_dict, error_message) -- error_message is None if all good
     name = name.strip()
     address = address.strip()
 
@@ -447,109 +332,96 @@ def parse_and_validate_setup_inputs(name, address, refrigerant, high_pres_str, l
         return None, "Name and address cannot be blank."
     if refrigerant not in PT_TABLES:
         return None, "Please select a valid refrigerant."
-    try:
-        high_pres = float(high_pres_str)
-        low_pres = float(low_pres_str)
-    except ValueError:
-        return None, "High/Low Pressure must be numbers."
-    try:
-        target_superheat = float(superheat_str)
-        target_subcooling = float(subcooling_str)
-    except ValueError:
-        return None, "Superheat/Subcooling must be numbers."
-    try:
-        interval_hours = float(interval_str)
-    except ValueError:
-        return None, "Interval must be a number."
+
+    pressures, error = parse_floats(
+        [("high_pres", high_pres_str), ("low_pres", low_pres_str)],
+        "High/Low Pressure must be numbers.",
+    )
+    if error:
+        return None, error
+
+    targets, error = parse_floats(
+        [("target_superheat", superheat_str), ("target_subcooling", subcooling_str)],
+        "Superheat/Subcooling must be numbers.",
+    )
+    if error:
+        return None, error
+
+    interval, error = parse_floats([("interval_hours", interval_str)], "Interval must be a number.")
+    if error:
+        return None, error
 
     values = {
         "client_name": name,
         "client_address": address,
         "refrigerant": refrigerant,
-        "high_pres": high_pres,
-        "low_pres": low_pres,
-        "target_superheat": target_superheat,
-        "target_subcooling": target_subcooling,
-        "interval_hours": interval_hours,
+        **pressures,
+        **targets,
+        **interval,
     }
     return values, None
 
 
+# open one form for client info, refrigerant, pressure setpoints, and target SH/SC
+# returns the same values the CLI prompts for these would have
 def collect_setup_gui(force_new_client=False):
-    # open one form for client info, refrigerant, pressure setpoints, and target SH/SC
-    # returns the same values the CLI prompts for these would have
-    saved_name, saved_address = load_client_info()
+    saved = load_setup()
     if force_new_client:
-        saved_name, saved_address = None, None
-    saved_high_pres, saved_low_pres = load_pressure_setpoints()
-    saved_superheat, saved_subcooling = load_target_sh_sc()
-    saved_interval = load_interval()
+        saved.pop("client_name", None)
+        saved.pop("client_address", None)
 
     result = {}
+    entries = {}
+    pad = {"padx": 10, "pady": 6}
 
     root = tk.Tk()
     root.title("System Setup")
-    pad = {"padx": 10, "pady": 6}
 
-    tk.Label(root, text="Client Name:").grid(row=0, column=0, sticky="e", **pad)
-    name_entry = tk.Entry(root, width=30)
-    name_entry.grid(row=0, column=1, **pad)
-    if saved_name:
-        name_entry.insert(0, saved_name)
+    # builds one label+entry row for the form, and remembers the widget
+    # so on_submit can read its value back later
+    def add_text_field(row, key, label):
+        tk.Label(root, text=label).grid(row=row, column=0, sticky="e", **pad)
+        entry = tk.Entry(root, width=30)
+        entry.grid(row=row, column=1, **pad)
+        if saved.get(key) is not None:
+            entry.insert(0, str(saved[key]))
+        entries[key] = entry
 
-    tk.Label(root, text="Client Address:").grid(row=1, column=0, sticky="e", **pad)
-    address_entry = tk.Entry(root, width=30)
-    address_entry.grid(row=1, column=1, **pad)
-    if saved_address:
-        address_entry.insert(0, saved_address)
+    row = 0
+    for key, label in [("client_name", "Client Name:"), ("client_address", "Client Address:")]:
+        add_text_field(row, key, label)
+        row += 1
 
-    tk.Label(root, text="Refrigerant:").grid(row=2, column=0, sticky="e", **pad)
+    tk.Label(root, text="Refrigerant:").grid(row=row, column=0, sticky="e", **pad)
     refrigerant_var = tk.StringVar(value=list(PT_TABLES.keys())[0])
-    refrigerant_menu = ttk.Combobox(
+    ttk.Combobox(
         root, textvariable=refrigerant_var, values=list(PT_TABLES.keys()),
         state="readonly", width=27,
-    )
-    refrigerant_menu.grid(row=2, column=1, **pad)
+    ).grid(row=row, column=1, **pad)
+    row += 1
 
-    tk.Label(root, text="High Pressure limit (bar):").grid(row=3, column=0, sticky="e", **pad)
-    high_pres_entry = tk.Entry(root, width=30)
-    high_pres_entry.grid(row=3, column=1, **pad)
-    if saved_high_pres is not None:
-        high_pres_entry.insert(0, str(saved_high_pres))
-
-    tk.Label(root, text="Low Pressure limit (bar):").grid(row=4, column=0, sticky="e", **pad)
-    low_pres_entry = tk.Entry(root, width=30)
-    low_pres_entry.grid(row=4, column=1, **pad)
-    if saved_low_pres is not None:
-        low_pres_entry.insert(0, str(saved_low_pres))
-
-    tk.Label(root, text="Target Superheat (C):").grid(row=5, column=0, sticky="e", **pad)
-    superheat_entry = tk.Entry(root, width=30)
-    superheat_entry.grid(row=5, column=1, **pad)
-    if saved_superheat is not None:
-        superheat_entry.insert(0, str(saved_superheat))
-
-    tk.Label(root, text="Target Subcooling (C):").grid(row=6, column=0, sticky="e", **pad)
-    subcooling_entry = tk.Entry(root, width=30)
-    subcooling_entry.grid(row=6, column=1, **pad)
-    if saved_subcooling is not None:
-        subcooling_entry.insert(0, str(saved_subcooling))
-
-    tk.Label(root, text="Interval (hours):").grid(row=7, column=0, sticky="e", **pad)
-    interval_entry = tk.Entry(root, width=30)
-    interval_entry.grid(row=7, column=1, **pad)
-    if saved_interval is not None:
-        interval_entry.insert(0, str(saved_interval))
+    for key, label in [
+        ("high_pres", "High Pressure limit (bar):"),
+        ("low_pres", "Low Pressure limit (bar):"),
+        ("target_superheat", "Target Superheat (C):"),
+        ("target_subcooling", "Target Subcooling (C):"),
+        ("interval_hours", "Interval (hours):"),
+    ]:
+        add_text_field(row, key, label)
+        row += 1
 
     error_label = tk.Label(root, text="", fg="red")
-    error_label.grid(row=8, column=0, columnspan=2)
+    error_label.grid(row=row, column=0, columnspan=2)
+    row += 1
 
+    # validates the form; shows an error and stops here if something's
+    # wrong, otherwise stores the values and closes the window
     def on_submit():
         values, error = parse_and_validate_setup_inputs(
-            name_entry.get(), address_entry.get(), refrigerant_var.get(),
-            high_pres_entry.get(), low_pres_entry.get(),
-            superheat_entry.get(), subcooling_entry.get(),
-            interval_entry.get(),
+            entries["client_name"].get(), entries["client_address"].get(), refrigerant_var.get(),
+            entries["high_pres"].get(), entries["low_pres"].get(),
+            entries["target_superheat"].get(), entries["target_subcooling"].get(),
+            entries["interval_hours"].get(),
         )
         if error:
             error_label.config(text=error)
@@ -557,17 +429,14 @@ def collect_setup_gui(force_new_client=False):
         result.update(values)
         root.destroy()
 
-    tk.Button(root, text="Continue", command=on_submit).grid(row=9, column=0, columnspan=2, pady=10)
+    tk.Button(root, text="Continue", command=on_submit).grid(row=row, column=0, columnspan=2, pady=10)
 
     root.mainloop()
 
     if not result:
         raise SystemExit("Setup cancelled.")
 
-    save_client_info(result["client_name"], result["client_address"])
-    save_pressure_setpoints(result["high_pres"], result["low_pres"])
-    save_target_sh_sc(result["target_superheat"], result["target_subcooling"])
-    save_interval(result["interval_hours"])
+    save_setup(result)
     return (
         result["client_name"],
         result["client_address"],
@@ -580,6 +449,7 @@ def collect_setup_gui(force_new_client=False):
     )
 
 
+# entry point -- runs the setup form, then starts monitoring
 def main():
     force_new_client = "--new-client" in sys.argv
     client_name, client_address, refrigerant, high_pres, low_pres, target_superheat, target_subcooling, interval_hours = collect_setup_gui(force_new_client)
@@ -600,6 +470,7 @@ def main():
         client_address=client_address,
     )
     monitor(config, interval_seconds)
+
 
 if __name__ == "__main__":
     main()
