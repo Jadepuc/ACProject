@@ -57,7 +57,9 @@ fields, in this order:
 | High Pressure limit (bar) | typed, or pre-filled |
 | Low Pressure limit (bar) | typed, or pre-filled |
 | Target Superheat (C) | typed, or pre-filled |
+| Superheat Tolerance (+/- C) | typed, or pre-filled — defaults to 2.0 if nothing's saved yet |
 | Target Subcooling (C) | typed, or pre-filled |
+| Subcooling Tolerance (+/- C) | typed, or pre-filled — defaults to 2.0 if nothing's saved yet |
 | Interval (hours) | typed, or pre-filled |
 
 Clicking **Continue** runs `parse_and_validate_setup_inputs()`, which checks:
@@ -95,7 +97,16 @@ low_pres
 target_superheat
 target_subcooling
 interval_hours
+sh_tolerance
+sc_tolerance
 ```
+
+The two tolerance fields were added after the original seven, and are
+deliberately appended at the **end** of the file rather than inserted in
+the middle — that way, a `setup_config.txt` saved by an older version of
+this program (without tolerances) still loads correctly; the two new
+fields just come back empty and fall back to the default below, instead
+of shifting every other value out of position.
 
 Refrigerant is **not** saved here — it's always re-selected fresh each run
 from the dropdown.
@@ -202,7 +213,13 @@ temperature` (looked up from the high-side pressure).
 
 Once superheat and subcooling are known, `classify_sh_sc()` buckets each one
 into `"low"`, `"normal"`, or `"high"` relative to the **target range** set
-during setup (target value ± `SH_SC_TOLERANCE`, currently 2°C either side).
+during setup — target value ± its own tolerance. Superheat and subcooling
+each have their **own independently-set tolerance** (`sh_tolerance` /
+`sc_tolerance`, both entered in the setup form), rather than sharing one
+fixed number — useful since some manufacturers' charging charts specify a
+tighter tolerance on one than the other. If nothing's been entered yet, the
+form suggests `SH_SC_TOLERANCE` (2°C) as a reasonable starting point for
+either field.
 
 **`SH_SC_DIAGNOSIS`** maps each `(superheat_state, subcooling_state)`
 combination to a diagnosis, based on standard HVACR service-training logic:
@@ -242,9 +259,10 @@ Both are plain text and safe to open in any text editor.
   "Analogue" because they're placeholders for real sensor input that hasn't
   been wired in yet — swapping them for actual ADC/sensor reads shouldn't
   require touching anything outside `take_readings()`.
-- **`SH_SC_TOLERANCE` (2°C) and `TOLERANCE_PERCENTAGE` (5%) are starting
-  placeholders**, not calibrated values — tighten or loosen them to match
-  your actual sensor precision and service practice.
+- **`TOLERANCE_PERCENTAGE` (5%, for pressure) is still a fixed constant**,
+  not calibrated — tighten or loosen it in the code to match your actual
+  sensor precision. Superheat/subcooling tolerance, by contrast, is now set
+  per-system in the GUI rather than fixed in code (see above).
 - **Target superheat/subcooling are fixed values you set once**, which
   matches how TXV systems work. Fixed-orifice systems don't have one
   correct target superheat — it shifts with outdoor/indoor conditions and

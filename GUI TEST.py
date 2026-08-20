@@ -106,8 +106,12 @@ SETUP_FILE = "setup_config.txt"
 SETUP_FIELDS = [
     "client_name", "client_address", "high_pres", "low_pres",
     "target_superheat", "target_subcooling", "interval_hours",
+    "sh_tolerance", "sc_tolerance",
 ]
-SETUP_NUMERIC_FIELDS = {"high_pres", "low_pres", "target_superheat", "target_subcooling", "interval_hours"}
+SETUP_NUMERIC_FIELDS = {
+    "high_pres", "low_pres", "target_superheat", "target_subcooling",
+    "interval_hours", "sh_tolerance", "sc_tolerance",
+}
 
 
 # load whatever setup values were saved last time, as a dict
@@ -197,7 +201,8 @@ def fault_alarm(analogue_high, analogue_low, config):
     return message
 
 
-# how far off target SH/SC can be before its called low or high, change if needed
+# starting suggestion shown in the GUI if no tolerance has been saved yet --
+# each system can now set its own superheat/subcooling tolerance instead
 SH_SC_TOLERANCE = 2.0  # degC
 
 
@@ -324,7 +329,7 @@ def parse_floats(pairs, error_message):
 
 # check the raw GUI field values and turn them into real values
 # returns (values_dict, error_message) -- error_message is None if all good
-def parse_and_validate_setup_inputs(name, address, refrigerant, high_pres_str, low_pres_str, superheat_str, subcooling_str, interval_str):
+def parse_and_validate_setup_inputs(name, address, refrigerant, high_pres_str, low_pres_str, superheat_str, subcooling_str, interval_str, sh_tolerance_str, sc_tolerance_str):
     name = name.strip()
     address = address.strip()
 
@@ -341,8 +346,11 @@ def parse_and_validate_setup_inputs(name, address, refrigerant, high_pres_str, l
         return None, error
 
     targets, error = parse_floats(
-        [("target_superheat", superheat_str), ("target_subcooling", subcooling_str)],
-        "Superheat/Subcooling must be numbers.",
+        [
+            ("target_superheat", superheat_str), ("target_subcooling", subcooling_str),
+            ("sh_tolerance", sh_tolerance_str), ("sc_tolerance", sc_tolerance_str),
+        ],
+        "Superheat/Subcooling target or tolerance must be numbers.",
     )
     if error:
         return None, error
@@ -369,6 +377,8 @@ def collect_setup_gui(force_new_client=False):
     if force_new_client:
         saved.pop("client_name", None)
         saved.pop("client_address", None)
+    saved.setdefault("sh_tolerance", SH_SC_TOLERANCE)
+    saved.setdefault("sc_tolerance", SH_SC_TOLERANCE)
 
     result = {}
     entries = {}
@@ -404,7 +414,9 @@ def collect_setup_gui(force_new_client=False):
         ("high_pres", "High Pressure limit (bar):"),
         ("low_pres", "Low Pressure limit (bar):"),
         ("target_superheat", "Target Superheat (C):"),
+        ("sh_tolerance", "Superheat Tolerance (+/- C):"),
         ("target_subcooling", "Target Subcooling (C):"),
+        ("sc_tolerance", "Subcooling Tolerance (+/- C):"),
         ("interval_hours", "Interval (hours):"),
     ]:
         add_text_field(row, key, label)
@@ -422,6 +434,7 @@ def collect_setup_gui(force_new_client=False):
             entries["high_pres"].get(), entries["low_pres"].get(),
             entries["target_superheat"].get(), entries["target_subcooling"].get(),
             entries["interval_hours"].get(),
+            entries["sh_tolerance"].get(), entries["sc_tolerance"].get(),
         )
         if error:
             error_label.config(text=error)
@@ -444,7 +457,9 @@ def collect_setup_gui(force_new_client=False):
         result["high_pres"],
         result["low_pres"],
         result["target_superheat"],
+        result["sh_tolerance"],
         result["target_subcooling"],
+        result["sc_tolerance"],
         result["interval_hours"],
     )
 
@@ -452,9 +467,13 @@ def collect_setup_gui(force_new_client=False):
 # entry point -- runs the setup form, then starts monitoring
 def main():
     force_new_client = "--new-client" in sys.argv
-    client_name, client_address, refrigerant, high_pres, low_pres, target_superheat, target_subcooling, interval_hours = collect_setup_gui(force_new_client)
-    sh_range = build_range(target_superheat)
-    sc_range = build_range(target_subcooling)
+    (
+        client_name, client_address, refrigerant, high_pres, low_pres,
+        target_superheat, sh_tolerance, target_subcooling, sc_tolerance,
+        interval_hours,
+    ) = collect_setup_gui(force_new_client)
+    sh_range = build_range(target_superheat, sh_tolerance)
+    sc_range = build_range(target_subcooling, sc_tolerance)
     interval_seconds = interval_hours * 3600
     print(f"Target Superheat: {target_superheat} C (accepting {sh_range[0]:.1f}-{sh_range[1]:.1f} C)")
     print(f"Target Subcooling: {target_subcooling} C (accepting {sc_range[0]:.1f}-{sc_range[1]:.1f} C)")
